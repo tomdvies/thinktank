@@ -80,7 +80,7 @@ class network:
 			else:
 				self.layers[i].weights = self.layers[i].weights - (stepsize/len(xbatch)) * master_array[i]
 			# print(self.layers[i].weights)
-		self.last_grad_change = [-(stepsize / len(xbatch)) * master_array[i] for i in range(len(self.layers))]
+		self.last_grad_change = [-(stepsize / len(xbatch)) * master_array[i] + (self.momentum_coef) * self.last_grad_change[i] for i in range(len(self.layers))]
 
 	def grad_array(self, x, y):
 		predicted_y = self.compute(x)
