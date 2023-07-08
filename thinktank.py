@@ -55,13 +55,23 @@ class network:
 		self.momentum_coef = momentum_coef
 		if self.momentum_coef:
 			self.last_grad_change = [np.zeros(l.weights.shape) for l in layers]
+		self.last_grad_change_set = False
 		for l in layers[0:len(layers)]:
 			l.acvfn = acvfn
 			l.deriv_acvfn = deriv_acvfn
-		if not self.linear_on_final:
+		if self.linear_on_final:
 			layers[-1].acvfn = np.vectorize(lambda x:x)
 			layers[-1].deriv_acvfn = np.vectorize(lambda x:1)
 		# self.grad_weights
+
+	def multiply(self,A,B):
+		# hacky fix to avoid a big re-write to allow for activation functions from R^n -> R^n instead of just R -> R
+		# in the 1st case layer.deriv_acfn should be the jacobian function
+		# to do properly, you should probably enforce that layer.deriv_acfn is the diagonal jacobain of the vectorised version of your 1d activation function.
+		if A.shape[1] == 1:
+			return np.multiply(A,B)
+		else:
+			return np.matmul(A,B)
 
 	def sgd(self,xbatch, ybatch, stepsize):
 		grad_arrays = [self.grad_array2(x,y) for x,y in zip(xbatch,ybatch)]
@@ -77,13 +87,17 @@ class network:
 		for i in range(len(self.layers)):
 			# print(master_array[i])
 			# print(self.layers[i].weights)
-			if self.momentum_coef:
+			if self.last_grad_change_set and self.momentum_coef:
 				# print(master_array[i])
+				# print(self.last_grad_change)
 				self.layers[i].weights = self.layers[i].weights - ((1-self.momentum_coef)*(stepsize / len(xbatch))) * master_array[i] + (self.momentum_coef) * self.last_grad_change[i]
 			else:
 				self.layers[i].weights = self.layers[i].weights - (stepsize/len(xbatch)) * master_array[i]
 			# print(self.layers[i].weights)
-		self.last_grad_change = [-(stepsize / len(xbatch)) * master_array[i] + (self.momentum_coef) * self.last_grad_change[i] for i in range(len(self.layers))]
+		if self.momentum_coef:
+			self.last_grad_change = [- ((1-self.momentum_coef)*(stepsize / len(xbatch))) * master_array[i] + (self.momentum_coef) * self.last_grad_change[i] for i in range(len(self.layers))]
+			self.last_grad_change_set = True
+
 
 	def grad_array2(self,x,y):
 		predicted_y = self.compute(x)
@@ -92,18 +106,19 @@ class network:
 		delta_array = [np.zeros([1])] * L
 		# first output layer
 		# print(L-1)
-		delta_array[L-1] = np.multiply(self.layers[L-1].deriv_acvfn(self.layers[L-1].activation), self.deriv_loss(predicted_y, y))
+		delta_array[L-1] = self.multiply(self.layers[L-1].deriv_acvfn(self.layers[L-1].activation), self.deriv_loss(predicted_y, y))
 		out_array[L-1] = np.matmul(delta_array[L-1],self.layers[L-2].out.transpose())
 		# here l runs from L-2 to 1
 		for l in range(L-2,0, -1):
 			# print(out_array)
 			# print(l)
-			delta_array[l] = np.multiply(self.layers[l].deriv_acvfn(self.layers[l].activation),np.matmul(self.layers[l+1].weights.transpose(), delta_array[l+1]))
+			delta_array[l] = self.multiply(self.layers[l].deriv_acvfn(self.layers[l].activation),np.matmul(self.layers[l+1].weights.transpose(), delta_array[l+1]))
 			# print(delta_array[l])
 			out_array[l] = np.matmul(delta_array[l], self.layers[l-1].out.transpose())
 		# delta_array[0] = self.deriv_acvfn(np.matmul(self.layers[1].weights.transpose(), delta_array[1]))
-		delta_array[0] = np.multiply(self.layers[0].deriv_acvfn(self.layers[0].activation),np.matmul(self.layers[1].weights.transpose(), delta_array[1]))
+		delta_array[0] = self.multiply(self.layers[0].deriv_acvfn(self.layers[0].activation),np.matmul(self.layers[1].weights.transpose(), delta_array[1]))
 		out_array[0] = np.matmul(delta_array[0], x.transpose())
+		# print(out_array[0])
 		# print(out_array)
 		# print()
 		return out_array
