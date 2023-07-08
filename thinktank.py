@@ -2,7 +2,7 @@ import numpy as np
 
 # ignore bias
 class layer:
-	def __init__(self, weights, acvfn=None):
+	def __init__(self, weights, acvfn=None, deriv_acvfn=None):
 		# bias in R^N where N is width of layer
 		# weights are NxM matrix where M is width of previous layer
 		# acvfn is the actiavtion function
@@ -10,6 +10,7 @@ class layer:
 		self.out = None
 		self.activation = None
 		self.acvfn = acvfn
+		self.deriv_acvfn = deriv_acvfn
 
 	def compute(self, x):
 		# apply weights
@@ -24,10 +25,10 @@ class layer:
 
 def init_random_layer(indim, outdim, acvfn=None):
 	# pattern matching by richard duda said this was the right thing to do
-	weights = (2/indim)*(np.random.rand(outdim, indim) - (1/2) * np.ones((outdim,indim)))
+	weights = (2/np.sqrt(indim))*(np.random.rand(outdim, indim) - (1/2) * np.ones((outdim,indim)))
 	return layer(weights,acvfn=acvfn)
 
-def init_random_network(architecture, acvfn, deriv_acvfn, loss, deriv_loss, activate_on_final = False, momentum_coef = None):
+def init_random_network(architecture, acvfn, deriv_acvfn, loss, deriv_loss, linear_on_final = False, momentum_coef = None):
 	# architecture is array of integers corresponsing width to sequential layers
 	layers = []
 	# indim = architecture[0]
@@ -37,10 +38,10 @@ def init_random_network(architecture, acvfn, deriv_acvfn, loss, deriv_loss, acti
 		indim = architecture[i]
 		outdim = architecture[i+1]
 		layers.append(init_random_layer(indim, outdim))
-	return network(layers, acvfn, deriv_acvfn=deriv_acvfn, loss=loss, deriv_loss=deriv_loss, activate_on_final=activate_on_final, momentum_coef=momentum_coef)
+	return network(layers, acvfn, deriv_acvfn=deriv_acvfn, loss=loss, deriv_loss=deriv_loss, linear_on_final=linear_on_final, momentum_coef=momentum_coef)
 
 class network:
-	def __init__(self, layers: list[layer], acvfn, deriv_acvfn=None, loss=None, deriv_loss=None, activate_on_final = False, momentum_coef = None):
+	def __init__(self, layers: list[layer], acvfn, deriv_acvfn=None, loss=None, deriv_loss=None, linear_on_final = False, momentum_coef = None):
 		# array of layers, activation, loss functions and their derivatives
 		# dloss is an array of partial derivatives corresponding to the output layer
 		self.acvfn = acvfn
@@ -50,14 +51,16 @@ class network:
 		# self.dloss = dloss
 		self.loss = loss
 		self.layers = layers
-		self.activate_on_final = activate_on_final
+		self.linear_on_final = linear_on_final
 		self.momentum_coef = momentum_coef
 		if self.momentum_coef:
 			self.last_grad_change = [np.zeros(l.weights.shape) for l in layers]
 		for l in layers[0:len(layers)]:
 			l.acvfn = acvfn
-		if not self.activate_on_final:
-			layers[-1].acvfn = lambda x:x
+			l.deriv_acvfn = deriv_acvfn
+		if not self.linear_on_final:
+			layers[-1].acvfn = np.vectorize(lambda x:x)
+			layers[-1].deriv_acvfn = np.vectorize(lambda x:1)
 		# self.grad_weights
 
 	def sgd(self,xbatch, ybatch, stepsize):
@@ -82,24 +85,6 @@ class network:
 			# print(self.layers[i].weights)
 		self.last_grad_change = [-(stepsize / len(xbatch)) * master_array[i] + (self.momentum_coef) * self.last_grad_change[i] for i in range(len(self.layers))]
 
-	def grad_array(self, x, y):
-		predicted_y = self.compute(x)
-		L = len(self.layers)
-		out_array = [np.zeros([1])] * L
-		delta_array = [np.zeros([1])] * L
-		# first output layer
-		# print(L-1)
-		delta_array[L-1] = self.deriv_acvfn(self.deriv_loss(predicted_y, y)) # np.ones(self.deriv_loss(predicted_y, y).shape)#
-		out_array[L-1] = np.matmul(delta_array[L-1],self.layers[L-1].out.transpose())
-		# here l runs from L-2 to 1
-		for l in range(L-2,0, -1):
-			# print(out_array)
-			delta_array[l] = self.deriv_acvfn(np.matmul(self.layers[l+1].weights.transpose(), delta_array[l+1]))
-			out_array[l] = np.matmul(delta_array[l], self.layers[l-1].out.transpose())
-		delta_array[0] = self.deriv_acvfn(np.matmul(self.layers[1].weights.transpose(), delta_array[1]))
-		out_array[0] = np.matmul(delta_array[0], x.transpose())
-		return out_array
-
 	def grad_array2(self,x,y):
 		predicted_y = self.compute(x)
 		L = len(self.layers)
@@ -107,25 +92,17 @@ class network:
 		delta_array = [np.zeros([1])] * L
 		# first output layer
 		# print(L-1)
-		if not self.activate_on_final:
-			# as last layer has activation function x here
-			delta_array[L-1] = np.multiply(np.ones(self.layers[L-1].activation.shape),self.deriv_loss(predicted_y, y))# self.deriv_acvfn(self.deriv_loss(predicted_y, y)) # np.ones(self.deriv_loss(predicted_y, y).shape)#
-		else:
-			delta_array[L-1] = np.multiply(self.deriv_acvfn(self.layers[L-1].activation), self.deriv_loss(predicted_y, y))
-		# print(self.layers[L-1].activation)
-		# delta_array[L-1] = np.multiply(self.deriv_acvfn(self.layers[L-1].activation),self.deriv_loss(predicted_y, y))# self.deriv_acvfn(self.deriv_loss(predicted_y, y)) # np.ones(self.deriv_loss(predicted_y, y).shape)#
-		# print(delta_array[L-1])
-		# print(delta_array[L-1])
+		delta_array[L-1] = np.multiply(self.layers[L-1].deriv_acvfn(self.layers[L-1].activation), self.deriv_loss(predicted_y, y))
 		out_array[L-1] = np.matmul(delta_array[L-1],self.layers[L-2].out.transpose())
 		# here l runs from L-2 to 1
 		for l in range(L-2,0, -1):
 			# print(out_array)
 			# print(l)
-			delta_array[l] = np.multiply(self.deriv_acvfn(self.layers[l].activation),np.matmul(self.layers[l+1].weights.transpose(), delta_array[l+1]))
+			delta_array[l] = np.multiply(self.layers[l].deriv_acvfn(self.layers[l].activation),np.matmul(self.layers[l+1].weights.transpose(), delta_array[l+1]))
 			# print(delta_array[l])
 			out_array[l] = np.matmul(delta_array[l], self.layers[l-1].out.transpose())
 		# delta_array[0] = self.deriv_acvfn(np.matmul(self.layers[1].weights.transpose(), delta_array[1]))
-		delta_array[0] = np.multiply(self.deriv_acvfn(self.layers[0].activation),np.matmul(self.layers[1].weights.transpose(), delta_array[1]))
+		delta_array[0] = np.multiply(self.layers[0].deriv_acvfn(self.layers[0].activation),np.matmul(self.layers[1].weights.transpose(), delta_array[1]))
 		out_array[0] = np.matmul(delta_array[0], x.transpose())
 		# print(out_array)
 		# print()

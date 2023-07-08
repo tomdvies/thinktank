@@ -8,7 +8,7 @@ loss = lambda y1,y2: 0.5*np.dot(y1-y2,y1-y2)
 dloss = lambda y1,y2: (y1-y2)
 # loss = lambda y1,y2: -y2*np.log(y1) - (1-y2)*np.log(1-y1)
 # dloss = lambda y1,y2: -y2/y1 + (1-y2)/(1-y1)
-net = init_random_network([1,30,20,1], active, dactive, loss, dloss, activate_on_final=False,momentum_coef=3/10)
+net = init_random_network([1,30,20,1], active, dactive, loss, dloss, linear_on_final=False, momentum_coef=3 / 10)
 
 # total number of training data points
 n = 1000

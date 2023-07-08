@@ -8,7 +8,7 @@ dactive =np.vectorize(lambda x: (1/(1 + np.exp(-x))) * (1- (1/(1 + np.exp(-x))))
 # dloss = lambda y1,y2: (y1-y2)
 loss = lambda y1,y2: -y2*np.log(y1) - (1-y2)*np.log(1-y1)
 dloss = lambda y1,y2: -y2/y1 + (1-y2)/(1-y1)
-net = init_random_network([2,5,1], active, dactive, loss, dloss, activate_on_final=True)
+net = init_random_network([2,5,1], active, dactive, loss, dloss, linear_on_final=True)
 
 input = [np.array([x]).transpose() for x in [[1,1],[0,1],[1,0],[0,0]]]
 output = [np.array([x]) for x in [0,1,1,0]]
