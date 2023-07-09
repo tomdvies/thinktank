@@ -1,4 +1,5 @@
 import numpy as np
+import base64
 
 # ignore bias
 class layer:
@@ -13,14 +14,12 @@ class layer:
 		self.deriv_acvfn = deriv_acvfn
 
 	def compute(self, x):
-		# apply weights
+		# apply weights and store for backprop
 		self.activation = np.matmul(self.weights, x)
 		# add bias
 		# x2 = x1 + self.bias
 		# apply activation function
-		# print(x1)
 		self.out = self.acvfn(self.activation)
-		# print(self.out)
 		return self.out
 
 def init_random_layer(indim, outdim, acvfn=None):
@@ -42,96 +41,95 @@ def init_random_network(architecture, acvfn, deriv_acvfn, loss, deriv_loss, line
 
 class network:
 	def __init__(self, layers: list[layer], acvfn, deriv_acvfn=None, loss=None, deriv_loss=None, linear_on_final = False, momentum_coef = None):
-		# array of layers, activation, loss functions and their derivatives
-		# dloss is an array of partial derivatives corresponding to the output layer
+		# activation function to give to layers that don't already have one
 		self.acvfn = acvfn
+		# either standard derivative of your activation function if its R->R or it's jacobian if it's R^n->R^n
 		self.deriv_acvfn = deriv_acvfn
+		# grad of your loss function with respect to the output of your nn
 		self.deriv_loss = deriv_loss
-		# self.deracvfn = deracvfn
-		# self.dloss = dloss
+		# the loss function to be used in sgd
 		self.loss = loss
 		self.layers = layers
-		self.linear_on_final = linear_on_final
 		self.momentum_coef = momentum_coef
 		if self.momentum_coef:
 			self.last_grad_change = [np.zeros(l.weights.shape) for l in layers]
 		self.last_grad_change_set = False
 		for l in layers[0:len(layers)]:
-			l.acvfn = acvfn
-			l.deriv_acvfn = deriv_acvfn
-		if self.linear_on_final:
+			# if the layers don't currently have activation functions, add them
+			if not l.acvfn:
+				l.acvfn = acvfn
+				l.deriv_acvfn = deriv_acvfn
+		# hacky for if you want the last layer to have an activation x
+		if linear_on_final:
 			layers[-1].acvfn = np.vectorize(lambda x:x)
 			layers[-1].deriv_acvfn = np.vectorize(lambda x:1)
 		# self.grad_weights
 
 	def multiply(self,A,B):
-		# hacky fix to avoid a big re-write to allow for activation functions from R^n -> R^n instead of just R -> R
-		# in the 1st case layer.deriv_acfn should be the jacobian function
-		# to do properly, you should probably enforce that layer.deriv_acfn is the diagonal jacobain of the vectorised version of your 1d activation function.
+		# hacky fix to avoid a big re-write while still allowing for activation functions from R^n -> R^n instead of just R -> R
+		# in the 1st case layer.deriv_acfn should be the jacobian of your activation function
+		# to do properly, should enforce that layer.deriv_acfn is the diagonal jacobian of the vectorised version of your 1d activation function.
 		if A.shape[1] == 1:
 			return np.multiply(A,B)
 		else:
 			return np.matmul(A,B)
 
 	def sgd(self,xbatch, ybatch, stepsize):
-		grad_arrays = [self.grad_array2(x,y) for x,y in zip(xbatch,ybatch)]
+		# batches work as the expectation of them is still grad of empirical risk on your entire training set
+		# assuming they are chosen uniformly from your train data
+		# get arrays of derivatives
+		grad_arrays = [self.grad_array(x,y) for x,y in zip(xbatch,ybatch)]
+		# construct sum of derivatives
 		master_array = grad_arrays[0]
-		# print(master_array)
 		for array in grad_arrays[1::]:
 			master_array = [master_array[i] + array[i] for i in range(len(array))]
-		# print("master array:")
-		# print(master_array)
-		# print(grad_arrays[0])
-		# print(grad_arrays[1])
-		# print("-----------")
 		for i in range(len(self.layers)):
-			# print(master_array[i])
-			# print(self.layers[i].weights)
+			# either do normal sgd or sgd with momentum
 			if self.last_grad_change_set and self.momentum_coef:
 				# print(master_array[i])
 				# print(self.last_grad_change)
 				self.layers[i].weights = self.layers[i].weights - ((1-self.momentum_coef)*(stepsize / len(xbatch))) * master_array[i] + (self.momentum_coef) * self.last_grad_change[i]
 			else:
 				self.layers[i].weights = self.layers[i].weights - (stepsize/len(xbatch)) * master_array[i]
-			# print(self.layers[i].weights)
 		if self.momentum_coef:
+			# update last grad change for momentum
 			self.last_grad_change = [- ((1-self.momentum_coef)*(stepsize / len(xbatch))) * master_array[i] + (self.momentum_coef) * self.last_grad_change[i] for i in range(len(self.layers))]
 			self.last_grad_change_set = True
 
 
-	def grad_array2(self,x,y):
+	def grad_array(self,x,y):
 		predicted_y = self.compute(x)
 		L = len(self.layers)
 		out_array = [np.zeros([1])] * L
 		delta_array = [np.zeros([1])] * L
-		# first output layer
-		# print(L-1)
+		# output layer handled as it's own case
 		delta_array[L-1] = self.multiply(self.layers[L-1].deriv_acvfn(self.layers[L-1].activation), self.deriv_loss(predicted_y, y))
 		out_array[L-1] = np.matmul(delta_array[L-1],self.layers[L-2].out.transpose())
+		# loop over inside layers and do backprop
 		# here l runs from L-2 to 1
 		for l in range(L-2,0, -1):
-			# print(out_array)
-			# print(l)
 			delta_array[l] = self.multiply(self.layers[l].deriv_acvfn(self.layers[l].activation),np.matmul(self.layers[l+1].weights.transpose(), delta_array[l+1]))
-			# print(delta_array[l])
 			out_array[l] = np.matmul(delta_array[l], self.layers[l-1].out.transpose())
-		# delta_array[0] = self.deriv_acvfn(np.matmul(self.layers[1].weights.transpose(), delta_array[1]))
+		# input layer handled as it's own case
 		delta_array[0] = self.multiply(self.layers[0].deriv_acvfn(self.layers[0].activation),np.matmul(self.layers[1].weights.transpose(), delta_array[1]))
 		out_array[0] = np.matmul(delta_array[0], x.transpose())
-		# print(out_array[0])
-		# print(out_array)
-		# print()
 		return out_array
 
-	# def dump_to_json(self):
-
-
 	def compute(self,x):
-		# push results forward
-		# print(f"x: {x}")
+		# push results forward through each layer
 		for l in self.layers:
 			x = l.compute(x)
 		return x
+
+	def dump_network_to_string(self):
+		# saves network weights to a string, base64 encoding each weight matrix.
+		return ";".join([base64.b64encode(l.weights.astype("<u2").tobytes()).decode() for l in self.layers])
+
+	def load_network_from_string(self, s: str):
+		# load weights from string generated via the above function.
+		weights  = [np.frombuffer(base64.b64decode(subs)) for subs in s.split(";")]
+		for l,w in zip(self.layers, weights):
+			l.weights = w.reshape(l.weights.shape)
 
 if __name__ == "__main__":
 	# sigmoid
